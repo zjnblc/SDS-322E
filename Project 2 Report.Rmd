@@ -1,0 +1,721 @@
+---
+title: 'Project 2: Supervised and Unsupervised Learning'
+author: "SDS322E"
+date: ''
+output:
+  html_document:
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+  pdf_document:
+    toc: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F,
+tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
+```
+### Chang Li, Xiaowen Jiang, Yuxuan Qian
+
+## Customer Personality Analysis
+
+### Introduction
+The data set is named customer personality analysis, which helps companies to modify their products by collecting data on customers' personal conditions, and is found on Kaggle: https://www.kaggle.com/datasets/imakash3011/customer-personality-analysis?resource=download. We focus on 9 variables and 2216 observations from the data set. The variable “Age” means the Age of the Customers; “Graduated” measures whether the customers' education levels are equal or higher than undergraduate, 1 for yes and 0 for no; “Married” denotes the marital status, 0 for not married and 1 for married; “Income” shows the customers' yearly household incomes; “Havekids” measures whether the customers have kids, 1 for yes and 0 for no; “Recency” denotes the number of days since customers' last purchases, “NumDealsPurchases” shows the number of purchases made with a discount; “NumWebVisitsMonth” expresses the number of visits to company’s website in the last month; "Response" measures if customers accepted the offer in the last campaign, 1 for yes and o for otherwise. The binary variable we will mainly use is "Response", and from this data set, 1883 observations are showing “0” and 333 observations showing “1” (The process of getting these data is shown below). We do this classification problem because we want to know what characteristics of customers will be interested in promoting and consumption, thus helping the company to increase profit.
+
+In this project, we will have four parts, each with a method for doing the data analysis. The logistic Regression part and Tree-based Classifiers use logistic regression, CART, and random forest to calculate the accuracy, sensitivity, specificity, and AUC for the models; in these two parts, different seeds and the same train-test split sets are used five times later to obtain the average values, which helps to get a more precise conclusion. The regression part uses a linear regression model to calculate the RMSE, also, k-fold cross-validation is used for both the linear regression model and random forest model, and their RMSE values are calculated, too; the comparison between them helps us find the best-performing method. Finally, we choose PCA for the Unsupervised Learning part and explain the observed results by the plots of PCs and the calculated variances.
+```{r}
+## Load the packages we need
+library(tidyverse)
+library(caret)
+library(pROC)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(ggthemes)
+library(ggfortify)
+
+## Run the data set and get the number of total observations and the number of observations per group for the binary variable.
+## Use "read.csv" function to read the csv data file, and then use "mutate" and "select" functions to create and select the variables we want for analysis.
+data<-read.csv("marketing_campaign.csv")
+new_data<-data%>%mutate(Age=2022-Year_Birth,
+                                  Havekids=ifelse(as.numeric(Kidhome)+as.numeric(Teenhome)>0,1,0),
+                                  Married=ifelse(Marital_Status=="Married"|Marital_Status=="Together",1,0),
+                                  Graduated=ifelse(Education=="2n Cycle"|Education=="Basic",0,1))%>%select (Age,Graduated,Married,Income,Havekids,Recency,NumDealsPurchases,NumWebVisitsMonth,Response)
+
+## Use "na.omit" function to remove the rows with null value
+marketing_campaign<-na.omit(new_data)
+
+## Use "head" function to roughly observe the contents of the data frame
+head(marketing_campaign)
+
+## Use "nrow" function to get the number of total observations
+nrow(marketing_campaign)
+
+## Use "sum" function to obtain the number of observations per group for the binary variable.
+#### total number of observations for Complain variable equal to 0 
+sum(marketing_campaign$Response =="0")
+#### total number of observations for Complain variable equal to 1
+sum(marketing_campaign$Response =="1")
+```
+**So, there are totally 2216 observations. In binary variable, 1883 observations show "0" and 333 observation show "1".**
+
+### Logistic Regression
+
+#### In logistic regression part, we first conducted a regression modeling without train-test split set or seed, and preliminarily analyzed the data. By calculating the values of accuracy, sensitivity and specificity, as well as AUC, we determined the performence of the classifier. After that, we set five seeds and a train-test split set to repeat the analysis of the logistic regression model and finally reach the conclusion.
+
+###### Firstly, we predict the binary variable from the numeric variables by logistic regression through "glm" function and then use "predict" function to get the predictions for this model.
+```{r}
+glm_bn<-glm(Response~.,family="binomial",data=marketing_campaign)
+prediction_bn<-predict(glm_bn,mewdata=marketing_campaign,type="response")
+```
+###### Secodly, we will calculate (1).accuracy, (2).sensitivity and specificity, and (3).the AUC from an ROC curve.
+```{r}
+## We first classified the predicted values by "ifelse" function, and then use the "mean" function to calculate its accuracy. Since the ratio of 0 and 1 is not very equal, we set the threshold at 0.3. 
+predicted_class<-ifelse(prediction_bn>0.3,"1","0")
+mean(predicted_class==marketing_campaign$Response)
+
+## Then, we calculated the sensitivity and specificity for this model
+#### Create a confusion matrix by "table" function
+actual_values<-glm_bn$y
+conf_matrix<-table(predicted_class,actual_values)
+conf_matrix
+#### Use "sensitivity" and "specificity" function to calculate the value of sensitivity and specificity 
+sensitivity(conf_matrix)
+specificity(conf_matrix)
+
+#### Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_object<-roc(marketing_campaign$Response,prediction_bn)
+plot(roc_object)
+auc(roc_object)
+```
+**Based on the result, we can see that the accuracy of this model is 0.8429603, the sensitivity value is 0.9182156, the specificity value is 0.4174174, and the AUC from a ROC curve is 0.7949. In general, the classifier we did is OK: given that the accuracy was only about 0.84 and the specificity value was only about 0.42, our classifier had not demonstrated perfect performance; however, with an AUC close to 0.8, it is still a successful classifier. The large gap between the proportion of 0 and 1 in our binary variable may have had a certain impact on the performance of our classifier.**
+
+###### Then, we set five seeds and train-test split sets to repeat the model and continue calculating the value of accuracy, sensitivity, specificity, and AUC.
+
+*First Repetition*
+```{r}
+## Use "set.seed" function to set seeds
+set.seed(8)
+## Divide the data into training and testing set.
+idx_train_8<-createDataPartition(marketing_campaign$Response,p=0.8)[[1]]
+data_train_8<-marketing_campaign[idx_train_8,]
+data_test_8<-marketing_campaign[-idx_train_8,]
+
+## Use train-test split set to do the regression and prediction
+train_glm_bn_8<-glm(Response~.,family="binomial",data=data_train_8)
+test_prediction_bn_8<-predict(train_glm_bn_8,newdata=data_test_8,type="response")
+
+## Do the same process 
+test_predicted_class_8<-ifelse(test_prediction_bn_8>0.3,"1","0")
+mean(test_predicted_class_8==data_test_8$Response)
+
+conf_matrix_8<-table(test_predicted_class_8,data_test_8$Response)
+conf_matrix_8
+
+sensitivity(conf_matrix_8)
+specificity(conf_matrix_8)
+
+roc_object_8<-roc(data_test_8$Response,test_prediction_bn_8)
+auc(roc_object_8)
+```
+*Second Repetition*
+```{r}
+## Use "set.seed" function to set seeds
+set.seed(80)
+## Divide the data into training and testing set.
+idx_train_80<-createDataPartition(marketing_campaign$Response,p=0.8)[[1]]
+data_train_80<-marketing_campaign[idx_train_80,]
+data_test_80<-marketing_campaign[-idx_train_80,]
+
+## Use train-test split set to do the regression and prediction
+train_glm_bn_80<-glm(Response~.,family="binomial",data=data_train_80)
+test_prediction_bn_80<-predict(train_glm_bn_80,newdata=data_test_80,type="response")
+
+## Do the same process 
+test_predicted_class_80<-ifelse(test_prediction_bn_80>0.3,"1","0")
+mean(test_predicted_class_80==data_test_80$Response)
+
+conf_matrix_80<-table(test_predicted_class_80,data_test_80$Response)
+conf_matrix_80
+
+sensitivity(conf_matrix_80)
+specificity(conf_matrix_80)
+
+roc_object_80<-roc(data_test_80$Response,test_prediction_bn_80)
+auc(roc_object_80)
+```
+*Third Repetition*
+```{r}
+## Use "set.seed" function to set seeds
+set.seed(800)
+## Divide the data into training and testing set.
+idx_train_800<-createDataPartition(marketing_campaign$Response,p=0.8)[[1]]
+data_train_800<-marketing_campaign[idx_train_800,]
+data_test_800<-marketing_campaign[-idx_train_800,]
+
+## Use train-test split set to do the regression and prediction
+train_glm_bn_800<-glm(Response~.,family="binomial",data=data_train_800)
+test_prediction_bn_800<-predict(train_glm_bn_800,newdata=data_test_800,type="response")
+
+## Do the same process 
+test_predicted_class_800<-ifelse(test_prediction_bn_800>0.3,"1","0")
+mean(test_predicted_class_800==data_test_800$Response)
+
+conf_matrix_800<-table(test_predicted_class_800,data_test_800$Response)
+conf_matrix_800
+
+sensitivity(conf_matrix_800)
+specificity(conf_matrix_800)
+
+roc_object_800<-roc(data_test_800$Response,test_prediction_bn_800)
+auc(roc_object_800)
+```
+*Fourth Repetition*
+```{r}
+## Use "set.seed" function to set seeds
+set.seed(8000)
+## Divide the data into training and testing set.
+idx_train_8000<-createDataPartition(marketing_campaign$Response,p=0.8)[[1]]
+data_train_8000<-marketing_campaign[idx_train_8000,]
+data_test_8000<-marketing_campaign[-idx_train_8000,]
+
+## Use train-test split set to do the regression and prediction
+train_glm_bn_8000<-glm(Response~.,family="binomial",data=data_train_8000)
+test_prediction_bn_8000<-predict(train_glm_bn_8000,newdata=data_test_8000,type="response")
+
+## Do the same process 
+test_predicted_class_8000<-ifelse(test_prediction_bn_8000>0.3,"1","0")
+mean(test_predicted_class_8000==data_test_8000$Response)
+
+conf_matrix_8000<-table(test_predicted_class_8000,data_test_8000$Response)
+conf_matrix_8000
+
+sensitivity(conf_matrix_8000)
+specificity(conf_matrix_8000)
+
+roc_object_8000<-roc(data_test_8000$Response,test_prediction_bn_8000)
+auc(roc_object_8000)
+```
+*Fifth Repetition*
+```{r}
+## Use "set.seed" function to set seeds
+set.seed(80000)
+## Divide the data into training and testing set.
+idx_train_80000<-createDataPartition(marketing_campaign$Response,p=0.8)[[1]]
+data_train_80000<-marketing_campaign[idx_train_80000,]
+data_test_80000<-marketing_campaign[-idx_train_80000,]
+
+## Use train-test split set to do the regression and prediction
+train_glm_bn_80000<-glm(Response~.,family="binomial",data=data_train_80000)
+test_prediction_bn_80000<-predict(train_glm_bn_80000,newdata=data_test_80000,type="response")
+
+## Do the same process 
+test_predicted_class_80000<-ifelse(test_prediction_bn_80000>0.3,"1","0")
+mean(test_predicted_class_80000==data_test_80000$Response)
+
+conf_matrix_80000<-table(test_predicted_class_80000,data_test_80000$Response)
+conf_matrix_80000
+
+sensitivity(conf_matrix_80000)
+specificity(conf_matrix_80000)
+
+roc_object_80000<-roc(data_test_80000$Response,test_prediction_bn_80000)
+auc(roc_object_80000)
+```
+###### After the repetition, we use these results to get the average for accuracy, sensitivity, specificity, and AUC.
+```{r}
+## calculate the average accuracy 
+average_logistic_accuracy<-(0.8374718+0.8939052+0.8329571+0.8487585+0.8329571)/5
+average_logistic_accuracy
+## calculate the average sensitivity
+average_logistic_sensitivity<-(0.9214092+0.9405685+0.9281768+0.9052632+0.9254144)/5
+average_logistic_sensitivity
+## calculate the average specificity
+average_logistic_specificity<-(0.4189189+0.5714286+0.4074074+0.5079365+0.4197531)/5
+average_logistic_specificity
+## calculate the average AUC
+average_logistic_AUC<-(0.7588+0.8432+0.7989+0.8146+0.7777)/5
+average_logistic_AUC
+```
+**According to the five repeats, seed(80) can best predict new observations because it has the highest accuracy, sensitivity, specificity, and AUC; seed(8000) also has a good prediction result, but the other three are weak because they contain the lowest value for one of the measurements. However, following the data result, we can still say that they are all good predictions. In addition, in general, the average value of these measurements is higher than if the train and test sets were not set, which means doing a set split is meaningful. Moreover, since the accuracy of the original model is 0.8429603, which is very similar to the average accuracy of the cross-validation models, 0.8492099, there are no signs of overfitting.**
+
+
+### Tree-Based Classifiers
+
+#### In the Tree-Based Classifiers part, we will do the same thing with the logistic regression part. However, the logistic regression model is replaced by CART and Random Forest. Just like the logistic regression part, we will first fit a CART without seeds and train-test split sets and a Random Forest without train-test split sets (Since every training of random forest is randomly sampled by Bootstrap, a seed should be set to stabilize the results it gives) to calculate the accuracy, sensitivity, specificity, and AUC of these two models. We will then add the same seeds and train-test split sets as before and repeat them five times to calculate those values. Finally, we will judge the performance of the model by the obtained results. Finally, we will find an appropriate complexity parameter for the CART fit.
+
+###### Firstly, we will fit a CART without seting seeds and train-test split sets and a Random Forest without train-test split sets.
+
+Cart without seeds and train-test split test:
+```{r}
+## Use "rpart" function to fit a CART model
+cart<-rpart(Response~.,data=marketing_campaign)
+## Use "predict" function to get predictions for the observations
+cart_prediction<-predict(cart,newdata=marketing_campaign)
+pre_class<-ifelse(cart_prediction>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(pre_class==marketing_campaign$Response)
+
+## Use "table" function to build a confusion matrix
+conf_M<-table(pre_class,marketing_campaign$Response)
+conf_M
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_M)
+specificity(conf_M)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_cart<-roc(marketing_campaign$Response,cart_prediction)
+plot(roc_cart)
+auc(roc_cart)
+```
+Random Forest without train-test split sets:
+```{r}
+## set a seed for the random forest model
+set.seed(100)
+
+## Use "randomForest" function to fit a random forest model
+rf<-randomForest(Response~.,data=marketing_campaign)
+## Use "predict" function to get predictions for the observations
+rf_prediction<-predict(rf,data=marketing_campaign)
+predict_class<-ifelse(rf_prediction>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(predict_class==marketing_campaign$Response)
+
+## Use "table" function to build a confusion matrix
+conf_Ma<-table(predict_class,marketing_campaign$Response)
+conf_Ma
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_Ma)
+specificity(conf_Ma)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_rf<-roc(marketing_campaign$Response,rf_prediction)
+plot(roc_rf)
+auc(roc_rf)
+```
+**The performance of the original CART model is mediocre; its accuracy score is only 0.8384477, AUC is only 0.7738, and even sensitivity is lower than 0.9. The performance of the original random forest model is also mediocre, but it's a little bit better than CART since it has higher accuracy, sensitivity, and AUC. However, its specificity is lower than CART. In general, they are qualified classifiers, but not outstanding.** 
+
+###### Next, we set five seeds and train-test split sets to repeat the model and continue calculating the value of accuracy, sensitivity, specificity, and AUC. Since we will use the same seed as before, and the train-test split sets have already been set in the logistic regression part, they will not be shown again here.
+
+*First Repetition*
+
+First Repetition for CART:
+```{r}
+set.seed(8)
+
+## Use "rpart" function to fit a CART model
+train_cart_8<-rpart(Response~.,data=data_train_8)
+## Use "predict" function to get predictions for the observations
+test_cart_prediction_8<-predict(train_cart_8,newdata=data_test_8)
+test_pre_class_8<-ifelse(test_cart_prediction_8>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_pre_class_8==data_test_8$Response)
+
+## Use "table" function to build a confusion matrix
+conf_M_8<-table(test_pre_class_8,data_test_8$Response)
+conf_M_8
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_M_8)
+specificity(conf_M_8)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_cart_8<-roc(data_test_8$Response,test_cart_prediction_8)
+auc(roc_cart_8)
+```
+First Repetition for Random Forest:
+```{r}
+set.seed(8)
+
+## Use "randomForest" function to fit a random forest model
+train_rf_8<-randomForest(Response~.,data=data_train_8)
+## Use "predict" function to get predictions for the observations
+test_rf_prediction_8<-predict(train_rf_8,newdata=data_test_8)
+test_predict_class_8<-ifelse(test_rf_prediction_8>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_predict_class_8==data_test_8$Response)
+
+## Use "table" function to build a confusion matrix
+conf_Ma_8<-table(test_predict_class_8,data_test_8$Response)
+conf_Ma_8
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_Ma_8)
+specificity(conf_Ma_8)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_rf_8<-roc(data_test_8$Response,test_rf_prediction_8)
+auc(roc_rf_8)
+```
+*Second Repetition*
+
+Second Repetition for CART:
+```{r}
+set.seed(80)
+
+## Use "rpart" function to fit a CART model
+train_cart_80<-rpart(Response~.,data=data_train_80)
+## Use "predict" function to get predictions for the observations
+test_cart_prediction_80<-predict(train_cart_80,newdata=data_test_80)
+test_pre_class_80<-ifelse(test_cart_prediction_80>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_pre_class_80==data_test_80$Response)
+
+## Use "table" function to build a confusion matrix
+conf_M_80<-table(test_pre_class_80,data_test_80$Response)
+conf_M_80
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_M_80)
+specificity(conf_M_80)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_cart_80<-roc(data_test_80$Response,test_cart_prediction_80)
+auc(roc_cart_80)
+```
+Second Repetition for Random Forest:
+```{r}
+set.seed(80)
+
+## Use "randomForest" function to fit a random forest model
+train_rf_80<-randomForest(Response~.,data=data_train_80)
+## Use "predict" function to get predictions for the observations
+test_rf_prediction_80<-predict(train_rf_80,newdata=data_test_80)
+test_predict_class_80<-ifelse(test_rf_prediction_80>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_predict_class_80==data_test_80$Response)
+
+## Use "table" function to build a confusion matrix
+conf_Ma_80<-table(test_predict_class_80,data_test_80$Response)
+conf_Ma_80
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_Ma_80)
+specificity(conf_Ma_80)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_rf_80<-roc(data_test_80$Response,test_rf_prediction_80)
+auc(roc_rf_80)
+```
+*Third Repetition*
+
+Third Repetition for CART:
+```{r}
+set.seed(800)
+
+## Use "rpart" function to fit a CART model
+train_cart_800<-rpart(Response~.,data=data_train_800)
+## Use "predict" function to get predictions for the observations
+test_cart_prediction_800<-predict(train_cart_800,newdata=data_test_800)
+test_pre_class_800<-ifelse(test_cart_prediction_800>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_pre_class_800==data_test_800$Response)
+
+## Use "table" function to build a confusion matrix
+conf_M_800<-table(test_pre_class_800,data_test_800$Response)
+conf_M_800
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_M_800)
+specificity(conf_M_800)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_cart_800<-roc(data_test_800$Response,test_cart_prediction_800)
+auc(roc_cart_800)
+```
+Third Repetition for Random Forest:
+```{r}
+set.seed(800)
+
+## Use "randomForest" function to fit a random forest model
+train_rf_800<-randomForest(Response~.,data=data_train_800)
+## Use "predict" function to get predictions for the observations
+test_rf_prediction_800<-predict(train_rf_800,newdata=data_test_800)
+test_predict_class_800<-ifelse(test_rf_prediction_800>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_predict_class_800==data_test_800$Response)
+
+## Use "table" function to build a confusion matrix
+conf_Ma_800<-table(test_predict_class_800,data_test_800$Response)
+conf_Ma_800
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_Ma_800)
+specificity(conf_Ma_800)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_rf_800<-roc(data_test_800$Response,test_rf_prediction_800)
+auc(roc_rf_800)
+```
+*Fourth Repetition*
+
+Fourth Repetition for CART:
+```{r}
+set.seed(8000)
+
+## Use "rpart" function to fit a CART model
+train_cart_8000<-rpart(Response~.,data=data_train_8000)
+## Use "predict" function to get predictions for the observations
+test_cart_prediction_8000<-predict(train_cart_8000,newdata=data_test_8000)
+test_pre_class_8000<-ifelse(test_cart_prediction_8000>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_pre_class_8000==data_test_8000$Response)
+
+## Use "table" function to build a confusion matrix
+conf_M_8000<-table(test_pre_class_8000,data_test_8000$Response)
+conf_M_8000
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_M_8000)
+specificity(conf_M_8000)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_cart_8000<-roc(data_test_8000$Response,test_cart_prediction_8000)
+auc(roc_cart_8000)
+```
+Fourth Repetition for Random Forest:
+```{r}
+set.seed(8000)
+
+## Use "randomForest" function to fit a random forest model
+train_rf_8000<-randomForest(Response~.,data=data_train_8000)
+## Use "predict" function to get predictions for the observations
+test_rf_prediction_8000<-predict(train_rf_8000,newdata=data_test_8000)
+test_predict_class_8000<-ifelse(test_rf_prediction_8000>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_predict_class_8000==data_test_8000$Response)
+
+## Use "table" function to build a confusion matrix
+conf_Ma_8000<-table(test_predict_class_8000,data_test_8000$Response)
+conf_Ma_8000
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_Ma_8000)
+specificity(conf_Ma_8000)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_rf_8000<-roc(data_test_8000$Response,test_rf_prediction_8000)
+auc(roc_rf_8000)
+```
+*Fifth Repetition*
+
+Fifth Repetition for CART:
+```{r}
+set.seed(80000)
+
+## Use "rpart" function to fit a CART model
+train_cart_80000<-rpart(Response~.,data=data_train_80000)
+## Use "predict" function to get predictions for the observations
+test_cart_prediction_80000<-predict(train_cart_80000,newdata=data_test_80000)
+test_pre_class_80000<-ifelse(test_cart_prediction_80000>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_pre_class_80000==data_test_80000$Response)
+
+## Use "table" function to build a confusion matrix
+conf_M_80000<-table(test_pre_class_80000,data_test_80000$Response)
+conf_M_80000
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_M_80000)
+specificity(conf_M_80000)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_cart_80000<-roc(data_test_80000$Response,test_cart_prediction_80000)
+auc(roc_cart_80000)
+```
+Fifth Repetition for Random Forest:
+```{r}
+set.seed(80000)
+
+## Use "randomForest" function to fit a random forest model
+train_rf_80000<-randomForest(Response~.,data=data_train_80000)
+## Use "predict" function to get predictions for the observations
+test_rf_prediction_80000<-predict(train_rf_80000,newdata=data_test_80000)
+test_predict_class_80000<-ifelse(test_rf_prediction_80000>0.3,"1","0")
+
+## Calculate the accuracy score
+mean(test_predict_class_80000==data_test_80000$Response)
+
+## Use "table" function to build a confusion matrix
+conf_Ma_80000<-table(test_predict_class_80000,data_test_80000$Response)
+conf_Ma_80000
+
+## Use "sensitivity" and "specificity" functions to get the sensitivity and specificity values
+sensitivity(conf_Ma_80000)
+specificity(conf_Ma_80000)
+
+## Use "roc" function to create ROC curve, and then use "auc" function to calculate the value of AUC.
+roc_rf_80000<-roc(data_test_80000$Response,test_rf_prediction_80000)
+auc(roc_rf_80000)
+```
+###### After the repetition, we use these results to get the average for accuracy, sensitivity, specificity, and AUC for both CART and Random Forest.
+For CART:
+```{r}
+## calculate the average accuracy 
+average_CART_accuracy<-(0.8329571+0.8577878+0.8036117+0.8329571+0.8058691)/5
+average_CART_accuracy
+## calculate the average sensitivity
+average_CART_sensitivity<-(0.9132791+0.9379845+0.878453+0.8921053+0.9033149)/5
+average_CART_sensitivity
+## calculate the average specificity
+average_CART_specificity<-(0.4324324+0.3035714+0.4691358+0.4761905+0.3703704)/5
+average_CART_specificity
+## calculate the average AUC
+average_CART_AUC<-(0.7138+0.6944+0.7453+0.7425+0.7275)/5
+average_CART_AUC
+```
+For Random Forest:
+```{r}
+## calculate the average accuracy 
+average_rf_accuracy<-(0.8487585+0.8600451+0.8532731+0.8374718+0.8352144)/5
+average_rf_accuracy
+## calculate the average sensitivity
+average_rf_sensitivity<-(0.9159892+0.9043928+0.9060773+0.8842105+0.9254144)/5
+average_rf_sensitivity
+## calculate the average specificity
+average_rf_specificity<-(0.5135135+0.5535714+0.617284+0.555556+0.4320988)/5
+average_rf_specificity
+## calculate the average AUC
+average_rf_AUC<-(0.81+0.8567+0.8418+0.8342+0.7937)/5
+average_rf_AUC
+```
+**By comparing the original CART model and its average value, we find that except for sensitivity, the average has higher values on the other three measurements. However, for the random forest model, both the original and average have similar values. Therefore, in general, the performance of the model improves slightly after setting the train-test split set. It can be concluded that due to the low accuracy and low AUC, these two models do not perform super excellently in predicting new observations, but they are still good models. In addition, since the original accuracy of CART and the random forest is not very different from the average accuracy, there are no signs of overfitting. Moreover, by comparing these two tree-based methods with the logistic regression model, we find that except for specificity, logistic regression is a little bit better than CART, but has very similar performance with the random forest because of the lower AUC and specificity, and the higher accuracy and sensitivity. In this case, based on our data set, tree-based methods do not have an apparent better performance than the logistic regression model.**
+
+###### Now, we will use caret to choose an appropriate complexity parameter for our CART fit, and then plot the resulting tree. The method is that using 10 replications of 20 fold cross-validation to find the best value of cp with minsplit = 2. 
+```{r}
+## creates a collection of `cp`'s to evaluate
+possible_cps <- data.frame(cp = seq(from = 0.001, to = 0.05, length = 20))
+
+## use 10 replications of 20 fold cross-validation to find the best value of cp with minsplit = 2
+control <- rpart.control(minsplit = 2)
+k<-20
+repeats<-10
+train_control<-trainControl(method='repeatedcv',number=k,repeats=repeats)
+tuned_rpart<-train(Response~.,
+                   method="rpart",
+                   data=marketing_campaign,
+                   control=control,
+                   trControl=train_control,
+                   tuneGrid=possible_cps)
+
+## plot the resulting tree obtained by the appropriate cp through "rpart.plot" function
+rpart.plot(tuned_rpart$finalModel)
+```
+**The appropriate cp is 0.008736842. According to the graph we plot, we can see that this tree is firstly classified by whether the customer has an income higher than 82000. Those who don't have this amount of income will then be classified by whether their recency is lower than 21; then, on this branch, people are then classified by whether they are married, if their recency is higher than 61, and whether they have kids. On another branch (recency higher than 21), people will be classified by the number of web visits per month, whether they have kids, the number of deals purchased, and the amount of income. Those whose income is higher than 82000 will be classified by if they are married, whether their age is higher than 62, and whether they have kids. There are totally 24 branches, which are very densely distributed.**
+
+
+### Regression
+
+#### Our regression part will be very different from the previous two parts: we will no longer be using any train-test split sets, and we will predict another numeric variable instead of the binary variable "Response". First, we fit a linear regression model by the numeric variable "NumDealsPurchases" and calculate its RMSE. We choose this regression problem because we want to see how do customers' characteristics affect how much they buy. Then, the k-fold cross-validation method was used to fit both linear regression and random forest models and calculated their RMSE values. Finally, with these RMSE values, we will compare the three methods and determine which one performs best.
+
+###### To start with this part, we will fit a linear regression model, predict the observations, and calculate the RMSE for the overall data set.
+```{r}
+## Use "lm" function to fit a linear regression model
+lm<-lm(NumDealsPurchases~.,data=marketing_campaign)
+
+## Use "predict" function to get predictions for the observations
+predict_lm<-predict(lm,newdata=marketing_campaign)
+
+## Use "RMSE" function to report the RMSE for the overal data set
+RMSE(predict_lm,marketing_campaign$NumDealsPurchases)
+```
+**So, the value of RMSE calculated by linear regression model is 1.702358.**
+
+###### Next, we will first perform a k-fold cross-validation on the same linear regression model, and then calculate the value of RMSE. Since it packs the data randomly, we will set a seed for it.
+```{r}
+## Use "set.seed" function to set a seed for the k-fold cross-validation we are going to build
+set.seed(100)
+
+## Define training control
+train_control_lm<-trainControl(method='cv',number=10)
+
+## Use "train" and "method='lm'" function to fit a k-fold cross-validation linear regression model
+cv_lm<-train(NumDealsPurchases~.,
+             data=marketing_campaign,method='lm',
+             trControl=train_control_lm)
+print(cv_lm)
+```
+**So, the RMSE calculated by the k-fold cross-validation linear regression model is 1.722974.**
+
+###### Then, we will perform a k-fold cross-validation on a random forest model, and calculate the value of RMSE later. Since it packs the data randomly, we still have to set seed for it.
+```{r}
+## Use "set.seed" function to set a seed for the k-fold cross-validation we are going to build
+set.seed(100)
+
+## Define training control
+train_control_rf<-trainControl(method='cv',number=10)
+
+## Use "train" and method='rf'" function to fit a k-fold cross-validation random forest model
+cv_rf<-train(NumDealsPurchases~.,
+             data=marketing_campaign,method='rf',
+             trControl=train_control_rf)
+print(cv_rf)
+```
+**So, the RMSE calculated by the k-fold cross-validation random forest model is 1.577261.**
+
+**According to the result of RMSE, we can see that the RMSE of k-fold cross-validation linear regression model is 1.722974, which is higher than the RMSE of k-fold cross-validation random forest model, 1.577261, and that means k-fold cross-validation random forest model is better than k-fold cross-validation linear regression model. In addition, since the RMSE of linear regression model is 1.702358, which is smaller than k-fold cross-validation linear regression model but larger than k-fold cross-validation random forest model, we can conclude that in this part, k-fold cross-validation random forest model performs best.**
+
+
+### Unsupervised Learning: PCA
+
+#### In the unsupervised learning part, we choose to use the PCA method. PCA is a technique that helps to realize the visualization of multidimensional data and improve the interpretation of data. We will perform PCA on all the numeric variables in our data set: Age, Income, Recency, NumDealsPurchases, and NumWebVisitsMonth. After that, we will plot two graphs: the first graph is a preliminary plot that only shows the distribution of PC1 and PC2, and the second graph is a further plot that also contains arrows showing how the PCs change as the variables are increased. Through these two plots, we will analyze the distribution of PCs and the relationship between the original variables and the two PCs. In the end, we are going to do all kinds of calculations to get an idea about how much of the total variance is accounted for the PCs we decide to retain. Also, we will conclude whether the PCs capture most of the variance in the data set. 
+
+###### Performig PCA on five numeric variables by removing the other four binary variables
+```{r}
+pca<-marketing_campaign%>%
+  select(-Graduated)%>%
+  select(-Married)%>%
+  select(-Havekids)%>%
+  select(-Response)%>%
+  scale()%>%
+  prcomp()
+```
+###### Producing a data set for PCA and add Response information back into PCA data
+```{r}
+pca_data<-data.frame(pca$x,Response=marketing_campaign$Response)
+head(pca_data)
+```
+###### Using "ggplot" function to preliminary plot the observations PC scores for the PCs
+```{r}
+ggplot(pca_data,aes(x=PC1,y=PC2,color=factor(Response)))+
+  geom_point()+
+  scale_color_colorblind()
+```
+###### Look at the rotation matrix
+```{r}
+pca$rotation
+```
+###### Include arrows showing how the PCs change as the variables are increased
+```{r}
+autoplot(pca,
+        data=marketing_campaign,
+        colour='Response',
+        loadings=TRUE,
+        loadings.label=TRUE)
+```
+**The arrows show the relationship between the PCs (PC1 and PC2) and the original variables. We can see that an increase NumDealsPurchases and NumWebVisitsMonth will increase both PC1 and PC2; NumDealsPurchases increase more PC2 than NumWebVisitsMonth but NumWebVisitsMonth increase more PC1 than NumDealsPurchases. In addition, an increase in Income will cause a small increase in PC2 but a large decrease in PC1; an increase in Age will lead to a small decrease in PC1 but a large increase in PC2; an increase in Recency will create a small increase in PC2 and a small decrease in PC1.**
+
+###### Look at the percent variance explained
+```{r}
+percent<-100*pca$sdev^2/sum(pca$sdev^2)
+percent
+percent%>%cumsum
+```
+**According to the calculated variance, PC1 explains 34.5% of the variance, PC2 explains 21.7% of the variance, PC3 explains 20% of the variance, PC4 explains 16.1% of the variance, and PC5 explains 7.6% of the variance. In total, the first two PCs capture 56.3% of the variance, the first three PCs capture 76.3% of the variance, the first four PCs capture 92.4% of the variance, and all the PCs capture 100% of the variance. In this case, since these data are all greater than 50%, we would conclude that the PCs we get capture most of the variance in the data.**
+
+### Concluding Remarks
+In conclusion, combined with all the models we have made, the accuracy of predicting whether customers will make consumption responses to promotional activities is about 83%. This data indicates that our models are not perfect, but it is still qualified predictors. Through data comparison, we found that the accuracy of logistic regression is about 85% and the AUC is about 80%; the accuracy of CART is about 83% and AUC is about 72%; the accuracy of random forest is about 85% and the AUC is about 83%. This indicates that random forest is a better predictor by a slight margin. In addition, since the RMSE of linear regression is about 1.7, the RMSE of k-fold cross-validation linear regression is about 1.72, and the RMSE of k-fold cross-validation random forest is around 1.58, the k-fold cross-validation random forest became the best predictor for the regression part. Finally, our PCA can explain most of the variance, which performs well, and there are no signs of any overfitting conditions in the whole project.
